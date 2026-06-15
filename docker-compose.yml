@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow
+    container_name: mlflow
+
+    ports:
+      - "5001:5000"
+
+    volumes:
+      - mlflow_db:/mlflow
+      - mlflow_artifacts:/mlruns
+
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlruns
+      --serve-artifacts
+      --allowed-hosts "*"
+
+  trainer:
+    build: .
+    container_name: model-trainer
+    volumes:
+      - ./Data:/app/Data
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    command: python src/train.py Data/train.csv
+    depends_on:
+      - mlflow
+    profiles:
+      - train
+
+  predictor:
+    build: .
+    container_name: model-predictor
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./Data:/app/Data
+    environment:
+      - MODEL_VERSION=latest
+      - PYTHONUNBUFFERED=1
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    command: python src/predict.py
+    depends_on:
+      - mlflow
+
+  monitor:
+    build: .
+    container_name: model-monitor
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    command: python src/monitor.py once
+    depends_on:
+      - predictor
+    profiles:
+      - monitor
+  
+  streamlit:
+    build: .
+    container_name: streamlit-ui
+    ports:
+      - "8501:8501"
+    command: streamlit run streamlit_app.py --server.address=0.0.0.0 --server.port=8501
+    depends_on:
+      - predictor
+
+volumes:
+  mlflow_db:
+  mlflow_artifacts:
